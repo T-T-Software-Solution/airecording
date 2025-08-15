@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using AIConsoleAppRecording;
 using NAudio.Wave;
 using System.Text;
+using System.Runtime.InteropServices;
 
 class Program
 {
@@ -28,11 +29,18 @@ class Program
             return;
         }
         
-        // Get settings from environment or ask user
+        // Get settings from environment
         var settings = RecordingSettings.GetFromEnvironment();
         
-        // If recording mode not set in environment, ask user
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RECORDING_MODE")))
+        // Check if recording mode was set from environment (check User level explicitly)
+        var envMode = Environment.GetEnvironmentVariable("RECORDING_MODE", EnvironmentVariableTarget.User) 
+                     ?? Environment.GetEnvironmentVariable("RECORDING_MODE", EnvironmentVariableTarget.Process)
+                     ?? Environment.GetEnvironmentVariable("RECORDING_MODE");
+        if (!string.IsNullOrEmpty(envMode))
+        {
+            Console.WriteLine($"Using recording mode from environment: {settings.Mode}");
+        }
+        else
         {
             Console.WriteLine("Select recording mode:");
             Console.WriteLine("1. Microphone only");
@@ -49,13 +57,16 @@ class Program
                 _ => RecordingMode.Both
             };
         }
-        else
-        {
-            Console.WriteLine($"Using recording mode from environment: {settings.Mode}");
-        }
         
-        // If language not set in environment, ask user
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RECORDING_LANGUAGE")))
+        // Check if language was set from environment (check User level explicitly)
+        var envLang = Environment.GetEnvironmentVariable("RECORDING_LANGUAGE", EnvironmentVariableTarget.User)
+                     ?? Environment.GetEnvironmentVariable("RECORDING_LANGUAGE", EnvironmentVariableTarget.Process)
+                     ?? Environment.GetEnvironmentVariable("RECORDING_LANGUAGE");
+        if (!string.IsNullOrEmpty(envLang))
+        {
+            Console.WriteLine($"Using language from environment: {settings.Language}");
+        }
+        else
         {
             Console.WriteLine("\nSelect transcription language:");
             Console.WriteLine("1. Auto-detect");
@@ -72,34 +83,34 @@ class Program
                 _ => "auto"
             };
         }
-        else
-        {
-            Console.WriteLine($"Using language from environment: {settings.Language}");
-        }
         
-        // If microphone not set in environment and recording includes mic, ask user
-        if (settings.Mode != RecordingMode.SystemOnly && 
-            !settings.MicrophoneDeviceNumber.HasValue &&
-            string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RECORDING_MICROPHONE")))
+        // Check if microphone was set from environment (check User level explicitly)
+        var envMic = Environment.GetEnvironmentVariable("RECORDING_MICROPHONE", EnvironmentVariableTarget.User)
+                    ?? Environment.GetEnvironmentVariable("RECORDING_MICROPHONE", EnvironmentVariableTarget.Process)
+                    ?? Environment.GetEnvironmentVariable("RECORDING_MICROPHONE");
+        if (settings.Mode != RecordingMode.SystemOnly)
         {
-            AudioService.ListMicrophones();
-            
-            if (WaveInEvent.DeviceCount > 1)
+            if (!string.IsNullOrEmpty(envMic) && settings.MicrophoneDeviceNumber.HasValue)
             {
-                Console.Write("\nSelect microphone number (or press Enter for default): ");
-                var micChoice = Console.ReadLine();
-                if (!string.IsNullOrEmpty(micChoice) && int.TryParse(micChoice, out var micNumber))
+                Console.WriteLine($"Using microphone from environment: Device #{settings.MicrophoneDeviceNumber}");
+            }
+            else if (!settings.MicrophoneDeviceNumber.HasValue)
+            {
+                AudioService.ListMicrophones();
+                
+                if (WaveInEvent.DeviceCount > 1)
                 {
-                    if (micNumber >= 0 && micNumber < WaveInEvent.DeviceCount)
+                    Console.Write("\nSelect microphone number (or press Enter for default): ");
+                    var micChoice = Console.ReadLine();
+                    if (!string.IsNullOrEmpty(micChoice) && int.TryParse(micChoice, out var micNumber))
                     {
-                        settings.MicrophoneDeviceNumber = micNumber;
+                        if (micNumber >= 0 && micNumber < WaveInEvent.DeviceCount)
+                        {
+                            settings.MicrophoneDeviceNumber = micNumber;
+                        }
                     }
                 }
             }
-        }
-        else if (settings.MicrophoneDeviceNumber.HasValue)
-        {
-            Console.WriteLine($"Using microphone from environment: Device #{settings.MicrophoneDeviceNumber}");
         }
         
         string? audioFilePath = null;
@@ -218,11 +229,8 @@ class Program
             {
                 Console.WriteLine("\nOperation completed successfully!");
                 
-                // Show environment variable tips
-                Console.WriteLine("\n💡 TIP: You can set default values using environment variables:");
-                Console.WriteLine("   RECORDING_MODE=both       (mic/system/both)");
-                Console.WriteLine("   RECORDING_LANGUAGE=th     (auto/en/th)");
-                Console.WriteLine("   RECORDING_MICROPHONE=0    (device number)");
+                // Show environment variable tips based on actual selections and OS
+                ShowEnvironmentVariableSuggestions(settings);
             }
             else
             {
@@ -282,5 +290,100 @@ class Program
         {
             throw new InvalidOperationException($"Missing required settings: {string.Join(", ", missingSettings)}");
         }
+    }
+    
+    static void ShowEnvironmentVariableSuggestions(RecordingSettings settings)
+    {
+        // Detect OS
+        var isWindows = Environment.OSVersion.Platform == PlatformID.Win32NT;
+        var isMac = Environment.OSVersion.Platform == PlatformID.Unix && 
+                    System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX);
+        var isLinux = Environment.OSVersion.Platform == PlatformID.Unix && 
+                      System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux);
+        
+        string osName = isWindows ? "Windows" : (isMac ? "macOS" : "Linux/Unix");
+        
+        // Convert settings to environment variable values
+        string modeValue = settings.Mode switch
+        {
+            RecordingMode.MicrophoneOnly => "mic",
+            RecordingMode.SystemOnly => "system",
+            RecordingMode.Both => "both",
+            _ => "both"
+        };
+        
+        string languageValue = settings.Language ?? "auto";
+        string micValue = settings.MicrophoneDeviceNumber?.ToString() ?? "0";
+        
+        Console.WriteLine($"\n💡 TIP: Set default values to skip prompts next time ({osName}):");
+        Console.WriteLine("\n📌 To SET defaults based on your current selections:");
+        
+        if (isWindows)
+        {
+            // Windows commands (both CMD and PowerShell)
+            Console.WriteLine("\n   For Command Prompt (CMD):");
+            Console.WriteLine($"   setx RECORDING_MODE \"{modeValue}\"");
+            Console.WriteLine($"   setx RECORDING_LANGUAGE \"{languageValue}\"");
+            if (settings.Mode != RecordingMode.SystemOnly && settings.MicrophoneDeviceNumber.HasValue)
+            {
+                Console.WriteLine($"   setx RECORDING_MICROPHONE \"{micValue}\"");
+            }
+            
+            Console.WriteLine("\n   For PowerShell:");
+            Console.WriteLine($"   [Environment]::SetEnvironmentVariable('RECORDING_MODE', '{modeValue}', 'User')");
+            Console.WriteLine($"   [Environment]::SetEnvironmentVariable('RECORDING_LANGUAGE', '{languageValue}', 'User')");
+            if (settings.Mode != RecordingMode.SystemOnly && settings.MicrophoneDeviceNumber.HasValue)
+            {
+                Console.WriteLine($"   [Environment]::SetEnvironmentVariable('RECORDING_MICROPHONE', '{micValue}', 'User')");
+            }
+        }
+        else
+        {
+            // Linux/Mac commands
+            Console.WriteLine("\n   For current session only:");
+            Console.WriteLine($"   export RECORDING_MODE=\"{modeValue}\"");
+            Console.WriteLine($"   export RECORDING_LANGUAGE=\"{languageValue}\"");
+            if (settings.Mode != RecordingMode.SystemOnly && settings.MicrophoneDeviceNumber.HasValue)
+            {
+                Console.WriteLine($"   export RECORDING_MICROPHONE=\"{micValue}\"");
+            }
+            
+            Console.WriteLine("\n   To make permanent (add to ~/.bashrc or ~/.zshrc):");
+            Console.WriteLine($"   echo 'export RECORDING_MODE=\"{modeValue}\"' >> ~/.bashrc");
+            Console.WriteLine($"   echo 'export RECORDING_LANGUAGE=\"{languageValue}\"' >> ~/.bashrc");
+            if (settings.Mode != RecordingMode.SystemOnly && settings.MicrophoneDeviceNumber.HasValue)
+            {
+                Console.WriteLine($"   echo 'export RECORDING_MICROPHONE=\"{micValue}\"' >> ~/.bashrc");
+            }
+        }
+        
+        Console.WriteLine("\n🗑️  To REMOVE default settings:");
+        
+        if (isWindows)
+        {
+            Console.WriteLine("\n   For Command Prompt (CMD):");
+            Console.WriteLine("   setx RECORDING_MODE \"\"");
+            Console.WriteLine("   setx RECORDING_LANGUAGE \"\"");
+            Console.WriteLine("   setx RECORDING_MICROPHONE \"\"");
+            
+            Console.WriteLine("\n   For PowerShell:");
+            Console.WriteLine("   [Environment]::SetEnvironmentVariable('RECORDING_MODE', $null, 'User')");
+            Console.WriteLine("   [Environment]::SetEnvironmentVariable('RECORDING_LANGUAGE', $null, 'User')");
+            Console.WriteLine("   [Environment]::SetEnvironmentVariable('RECORDING_MICROPHONE', $null, 'User')");
+        }
+        else
+        {
+            Console.WriteLine("\n   For current session:");
+            Console.WriteLine("   unset RECORDING_MODE");
+            Console.WriteLine("   unset RECORDING_LANGUAGE");
+            Console.WriteLine("   unset RECORDING_MICROPHONE");
+            
+            Console.WriteLine("\n   To remove from ~/.bashrc or ~/.zshrc:");
+            Console.WriteLine("   sed -i '/RECORDING_MODE/d' ~/.bashrc");
+            Console.WriteLine("   sed -i '/RECORDING_LANGUAGE/d' ~/.bashrc");
+            Console.WriteLine("   sed -i '/RECORDING_MICROPHONE/d' ~/.bashrc");
+        }
+        
+        Console.WriteLine("\n📝 Note: Environment changes may require restarting your terminal/console.");
     }
 }
