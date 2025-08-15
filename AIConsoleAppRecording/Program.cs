@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using AIConsoleAppRecording;
 using NAudio.Wave;
+using System.Text;
 
 class Program
 {
@@ -125,11 +126,53 @@ class Program
             Console.WriteLine(transcription);
             Console.WriteLine("─" + new string('─', 50) + "\n");
             
+            // Generate title and summary if Azure AI is configured
+            string? aiTitle = null;
+            string? summary = null;
+            var hasAzureAI = !string.IsNullOrWhiteSpace(configuration["AzureAI:EndpointUrl"]) && 
+                            !string.IsNullOrWhiteSpace(configuration["AzureAI:ApiKey"]);
+            
+            if (hasAzureAI)
+            {
+                try
+                {
+                    var summaryService = new AzureSummaryService(configuration);
+                    (aiTitle, summary) = await summaryService.SummarizeAsync(transcription, settings.Language);
+                    
+                    if (!string.IsNullOrWhiteSpace(aiTitle))
+                    {
+                        Console.WriteLine("Generated title:");
+                        Console.WriteLine("─" + new string('─', 50));
+                        Console.WriteLine(aiTitle);
+                        Console.WriteLine("─" + new string('─', 50));
+                    }
+                    
+                    if (!string.IsNullOrWhiteSpace(summary))
+                    {
+                        Console.WriteLine("Generated summary:");
+                        Console.WriteLine("─" + new string('─', 50));
+                        Console.WriteLine(summary);
+                        Console.WriteLine("─" + new string('─', 50) + "\n");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Warning: Failed to generate summary: {ex.Message}");
+                    Console.WriteLine("Continuing without summary...\n");
+                }
+            }
+            else
+            {
+                Console.WriteLine("💡 TIP: Configure Azure AI to enable automatic summarization");
+                Console.WriteLine("   dotnet user-secrets set \"AzureAI:EndpointUrl\" \"<your-azure-ai-endpoint>\"");
+                Console.WriteLine("   dotnet user-secrets set \"AzureAI:ApiKey\" \"<your-azure-ai-key>\"\n");
+            }
+            
             bool notionSuccess = false;
             try
             {
                 var notionService = new NotionService(configuration);
-                await notionService.CreatePageAsync(transcription);
+                await notionService.CreatePageAsync(transcription, summary, aiTitle);
                 notionSuccess = true;
             }
             catch (Exception ex)
@@ -143,7 +186,26 @@ class Program
             {
                 var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
                 var fileName = $"Transcript-{timestamp}.txt";
-                await File.WriteAllTextAsync(fileName, transcription);
+                
+                var fileContent = new StringBuilder();
+                fileContent.AppendLine($"=== Audio Transcription - {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+                fileContent.AppendLine();
+                
+                if (!string.IsNullOrWhiteSpace(summary))
+                {
+                    fileContent.AppendLine("📝 SUMMARY:");
+                    fileContent.AppendLine(new string('─', 50));
+                    fileContent.AppendLine(summary);
+                    fileContent.AppendLine();
+                    fileContent.AppendLine(new string('═', 50));
+                    fileContent.AppendLine();
+                }
+                
+                fileContent.AppendLine("📄 FULL TRANSCRIPT:");
+                fileContent.AppendLine(new string('─', 50));
+                fileContent.AppendLine(transcription);
+                
+                await File.WriteAllTextAsync(fileName, fileContent.ToString());
                 Console.WriteLine($"Transcript saved to: {Path.GetFullPath(fileName)}");
                 localSaveSuccess = true;
             }
@@ -203,6 +265,13 @@ class Program
             "Azure:ApiKey",
             "Notion:ApiToken",
             "Notion:DatabaseId"
+        };
+        
+        // AzureAI settings are optional for summarization
+        var optionalSettings = new[]
+        {
+            "AzureAI:EndpointUrl",
+            "AzureAI:ApiKey"
         };
         
         var missingSettings = requiredSettings

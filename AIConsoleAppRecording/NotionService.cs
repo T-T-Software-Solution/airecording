@@ -19,12 +19,14 @@ public class NotionService
         _databaseId = configuration["Notion:DatabaseId"] ?? throw new ArgumentNullException("Notion:DatabaseId not configured");
     }
 
-    public async Task CreatePageAsync(string content)
+    public async Task CreatePageAsync(string content, string? summary = null, string? customTitle = null)
     {
         try
         {
             var currentTime = DateTime.Now;
-            var title = $"Transcription - {currentTime:yyyy-MM-dd HH:mm}";
+            var title = !string.IsNullOrWhiteSpace(customTitle) 
+                ? customTitle 
+                : $"Transcription - {currentTime:yyyy-MM-dd HH:mm}";
             var isoDate = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
             
             var requestBody = new
@@ -50,25 +52,7 @@ public class NotionService
                         }
                     }
                 },
-                children = new[]
-                {
-                    new
-                    {
-                        @object = "block",
-                        type = "paragraph",
-                        paragraph = new
-                        {
-                            rich_text = new[]
-                            {
-                                new
-                                {
-                                    type = "text",
-                                    text = new { content = content }
-                                }
-                            }
-                        }
-                    }
-                }
+                children = CreatePageChildren(content, summary, title)
             };
             
             var json = JsonSerializer.Serialize(requestBody);
@@ -93,6 +77,122 @@ public class NotionService
         {
             throw new InvalidOperationException($"Failed to create Notion page: {ex.Message}", ex);
         }
+    }
+
+    private object[] CreatePageChildren(string content, string? summary, string? title = null)
+    {
+        var children = new List<object>();
+
+        // Add title section if available
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            children.Add(new
+            {
+                @object = "block",
+                type = "heading_1",
+                heading_1 = new
+                {
+                    rich_text = new[]
+                    {
+                        new
+                        {
+                            type = "text",
+                            text = new { content = title }
+                        }
+                    }
+                }
+            });
+
+            children.Add(new
+            {
+                @object = "block",
+                type = "divider",
+                divider = new { }
+            });
+        }
+
+        // Add summary section if available
+        if (!string.IsNullOrWhiteSpace(summary))
+        {
+            children.Add(new
+            {
+                @object = "block",
+                type = "heading_2",
+                heading_2 = new
+                {
+                    rich_text = new[]
+                    {
+                        new
+                        {
+                            type = "text",
+                            text = new { content = "📝 Summary" }
+                        }
+                    }
+                }
+            });
+
+            children.Add(new
+            {
+                @object = "block",
+                type = "paragraph",
+                paragraph = new
+                {
+                    rich_text = new[]
+                    {
+                        new
+                        {
+                            type = "text",
+                            text = new { content = summary }
+                        }
+                    }
+                }
+            });
+
+            // Add divider
+            children.Add(new
+            {
+                @object = "block",
+                type = "divider",
+                divider = new { }
+            });
+        }
+
+        // Add full transcript section
+        children.Add(new
+        {
+            @object = "block",
+            type = "heading_2",
+            heading_2 = new
+            {
+                rich_text = new[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = new { content = "📄 Full Transcript" }
+                    }
+                }
+            }
+        });
+
+        children.Add(new
+        {
+            @object = "block",
+            type = "paragraph",
+            paragraph = new
+            {
+                rich_text = new[]
+                {
+                    new
+                    {
+                        type = "text",
+                        text = new { content = content }
+                    }
+                }
+            }
+        });
+
+        return children.ToArray();
     }
 
     public void Dispose()
