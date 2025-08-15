@@ -1,5 +1,7 @@
 # AIConsoleAppRecording
 
+![AIConsoleAppRecording Introduction](Documents/Landing_Image_Introduction.png)
+
 A powerful .NET 8 console application for audio recording, transcription, and intelligent note-taking. Record audio from your microphone, system audio, or both simultaneously, then automatically transcribe it using Azure OpenAI Whisper, generate summaries, and save to Notion.
 
 ## Screenshots
