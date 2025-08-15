@@ -2,6 +2,19 @@
 
 A powerful .NET 8 console application for audio recording, transcription, and intelligent note-taking. Record audio from your microphone, system audio, or both simultaneously, then automatically transcribe it using Azure OpenAI Whisper, generate summaries, and save to Notion.
 
+## Screenshots
+
+<details>
+<summary>📸 Click to view application screenshots</summary>
+
+### Running the Application
+![Application Running](Documents/Example_Of_Running_Application_Until_Save_To_Notion.png)
+
+### Result in Notion
+![Notion Result](Documents/Example_Transcript_Save_To_Notion.png)
+
+</details>
+
 ## Features
 
 - 🎙️ **Flexible Audio Recording**
@@ -85,12 +98,19 @@ dotnet user-secrets set "AzureAI:ApiKey" "your-azure-ai-api-key"
    - Give it a name and select your workspace
    - Copy the integration token
 
+   ![Create Notion Integration](Documents/Create_Notion_Integration.png)
+
 2. Create a database in Notion:
    - Create a new database with at least two properties:
      - **Name** (Title property) - for the transcript title
      - **Date** (Date property) - for the recording timestamp
    - Share the database with your integration
+   
+   ![Attach Connection to Database](Documents/Attach_Connection_To_Database_In_Notion.png)
+   
    - Copy the database ID from the URL
+   
+   ![Where is Database ID](Documents/Where_Is_Database_Id_In_Notion.png)
 
 ### Optional: Environment Variables for Defaults
 
@@ -159,12 +179,18 @@ dotnet run
    - Save locally as a text file
    - Clean up temporary files
 
+### Example Output
+
+![Example of Running Application](Documents/Example_Of_Running_Application_Until_Save_To_Notion.png)
+
 ## Output
 
 ### Notion Page
 - **Title**: "Transcription - YYYY-MM-DD HH:MM" or AI-generated title
 - **Date**: Recording timestamp
 - **Content**: Summary (if available) and full transcript
+
+![Example Transcript in Notion](Documents/Example_Transcript_Save_To_Notion.png)
 
 ### Local File
 - **Filename**: `Transcript-YYYYMMDD-HHMMSS.txt`
