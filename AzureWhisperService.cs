@@ -94,7 +94,6 @@ public class AzureWhisperService
             }
             
             var jsonResponse = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"Raw Azure response: {jsonResponse.Substring(0, Math.Min(200, jsonResponse.Length))}...");
             
             using var jsonDoc = JsonDocument.Parse(jsonResponse);
             

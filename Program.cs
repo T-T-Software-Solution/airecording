@@ -306,7 +306,7 @@ class Program
         Console.ReadKey();
     }
     
-    static async Task<string> MixSeparateAudioFiles(string micPath, string systemPath)
+    static Task<string> MixSeparateAudioFiles(string micPath, string systemPath)
     {
         try
         {
@@ -380,20 +380,19 @@ class Program
             Console.WriteLine($"  Original mic: {originalMicSize / (1024.0 * 1024.0):F2} MB");
             Console.WriteLine($"  Original system: {originalSystemSize / (1024.0 * 1024.0):F2} MB");
             
-            return outputPath;
+            return Task.FromResult(outputPath);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to mix audio files: {ex.Message}");
             Console.WriteLine($"Error details: {ex}");
-            return string.Empty;
+            return Task.FromResult(string.Empty);
         }
     }
     
     static async Task ProcessAudioFile(string audioFilePath, string language, IConfiguration configuration)
     {
         string finalAudioPath = audioFilePath;
-        bool createdTempMp3 = false;
         List<string> tempFiles = new List<string>();
         
         // Convert WAV files to MP3 for compression
@@ -409,7 +408,6 @@ class Program
             if (!string.IsNullOrEmpty(mp3Path))
             {
                 finalAudioPath = mp3Path;
-                createdTempMp3 = true;
                 tempFiles.Add(mp3Path);
             }
             else
@@ -485,9 +483,9 @@ class Program
                     
                     if (!string.IsNullOrWhiteSpace(summary))
                     {
-                        Console.WriteLine("Generated summary:");
+                        Console.WriteLine("Generated detailed content:");
                         Console.WriteLine("─" + new string('─', 50));
-                        Console.WriteLine(summary);
+                        Console.WriteLine(summary.Length > 500 ? summary.Substring(0, 500) + "..." : summary);
                         Console.WriteLine("─" + new string('─', 50) + "\n");
                     }
                 }
