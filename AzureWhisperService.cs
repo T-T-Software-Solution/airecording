@@ -12,6 +12,7 @@ public class AzureWhisperService
     public AzureWhisperService(IConfiguration configuration)
     {
         _httpClient = new HttpClient();
+        _httpClient.Timeout = TimeSpan.FromMinutes(30); // Increase timeout for large files
         _endpointUrl = configuration["Azure:EndpointUrl"] ?? throw new ArgumentNullException("Azure:EndpointUrl not configured");
         _apiKey = configuration["Azure:ApiKey"] ?? throw new ArgumentNullException("Azure:ApiKey not configured");
     }
@@ -23,13 +24,38 @@ public class AzureWhisperService
             throw new FileNotFoundException($"Audio file not found: {audioFilePath}");
         }
 
+        // Check file size and warn if very large
+        var fileInfo = new FileInfo(audioFilePath);
+        var fileSizeMB = fileInfo.Length / (1024.0 * 1024.0);
+        
+        if (fileSizeMB > 500)
+        {
+            Console.WriteLine($"⚠️  WARNING: Large file detected ({fileSizeMB:F1} MB). This may take several minutes to process.");
+        }
+        else if (fileSizeMB > 100)
+        {
+            Console.WriteLine($"📁 File size: {fileSizeMB:F1} MB - Processing may take a while...");
+        }
+
         try
         {
             using var form = new MultipartFormDataContent();
             
             var fileBytes = await File.ReadAllBytesAsync(audioFilePath);
             var fileContent = new ByteArrayContent(fileBytes);
-            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/wav");
+            
+            // Set appropriate content type based on file extension
+            var extension = Path.GetExtension(audioFilePath).ToLower();
+            var contentType = extension switch
+            {
+                ".mp3" => "audio/mpeg",
+                ".wav" => "audio/wav",
+                ".m4a" => "audio/m4a",
+                ".mp4" => "audio/mp4",
+                _ => "audio/wav" // Default fallback
+            };
+            
+            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
             
             form.Add(fileContent, "file", Path.GetFileName(audioFilePath));
             

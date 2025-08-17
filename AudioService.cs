@@ -1,5 +1,6 @@
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
+using NAudio.Lame;
 using System.Diagnostics;
 
 namespace AIConsoleAppRecording;
@@ -61,6 +62,15 @@ public class AudioService : IDisposable
             if (fileInfo.Length < 10240)
             {
                 throw new InvalidOperationException("Recording is too short or no audio was captured.");
+            }
+            
+            // Convert to MP3 to compress file size for Azure API (25MB limit)
+            var mp3Path = await ConvertToMp3(tempPath);
+            if (!string.IsNullOrEmpty(mp3Path))
+            {
+                // Clean up original WAV file
+                try { File.Delete(tempPath); } catch { }
+                return mp3Path;
             }
             
             return tempPath;
@@ -267,6 +277,45 @@ public class AudioService : IDisposable
             RecordingMode.Both => "microphone + system audio",
             _ => "unknown"
         };
+    }
+
+    private async Task<string> ConvertToMp3(string wavPath)
+    {
+        try
+        {
+            var mp3Path = Path.ChangeExtension(wavPath, ".mp3");
+            Console.WriteLine("Converting to MP3 for compression...");
+            
+            using var reader = new AudioFileReader(wavPath);
+            
+            // Use 128 kbps for good quality/size balance
+            await Task.Run(() =>
+            {
+                MediaFoundationEncoder.EncodeToMp3(reader, mp3Path, 128000);
+            });
+            
+            var originalSize = new FileInfo(wavPath).Length;
+            var compressedSize = new FileInfo(mp3Path).Length;
+            var compressionRatio = (1 - (double)compressedSize / originalSize) * 100;
+            
+            Console.WriteLine($"MP3 conversion complete!");
+            Console.WriteLine($"Original: {originalSize / (1024.0 * 1024.0):F2} MB → Compressed: {compressedSize / (1024.0 * 1024.0):F2} MB ({compressionRatio:F1}% reduction)");
+            
+            // Check if still too large for Azure API
+            if (compressedSize > 25 * 1024 * 1024) // 25MB limit
+            {
+                Console.WriteLine($"⚠️  WARNING: File is still {compressedSize / (1024.0 * 1024.0):F1} MB, exceeding Azure's 25MB limit!");
+                Console.WriteLine("Consider recording for a shorter duration.");
+            }
+            
+            return mp3Path;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to convert to MP3: {ex.Message}");
+            Console.WriteLine("Proceeding with WAV file...");
+            return string.Empty;
+        }
     }
 
     public static void ListMicrophones()
