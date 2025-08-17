@@ -131,22 +131,27 @@ public class NotionService
                 }
             });
 
-            children.Add(new
+            // Split summary into chunks if needed
+            var summaryChunks = SplitTextIntoChunks(summary, 2000);
+            foreach (var chunk in summaryChunks)
             {
-                @object = "block",
-                type = "paragraph",
-                paragraph = new
+                children.Add(new
                 {
-                    rich_text = new[]
+                    @object = "block",
+                    type = "paragraph",
+                    paragraph = new
                     {
-                        new
+                        rich_text = new[]
                         {
-                            type = "text",
-                            text = new { content = summary }
+                            new
+                            {
+                                type = "text",
+                                text = new { content = chunk }
+                            }
                         }
                     }
-                }
-            });
+                });
+            }
 
             // Add divider
             children.Add(new
@@ -175,24 +180,142 @@ public class NotionService
             }
         });
 
-        children.Add(new
+        // Split content into chunks of 2000 characters (Notion API limit)
+        var contentChunks = SplitTextIntoChunks(content, 2000);
+        foreach (var chunk in contentChunks)
         {
-            @object = "block",
-            type = "paragraph",
-            paragraph = new
+            children.Add(new
             {
-                rich_text = new[]
+                @object = "block",
+                type = "paragraph",
+                paragraph = new
                 {
-                    new
+                    rich_text = new[]
                     {
-                        type = "text",
-                        text = new { content = content }
+                        new
+                        {
+                            type = "text",
+                            text = new { content = chunk }
+                        }
+                    }
+                }
+            });
+        }
+
+        return children.ToArray();
+    }
+
+    private List<string> SplitTextIntoChunks(string text, int maxChunkSize)
+    {
+        var chunks = new List<string>();
+        
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return chunks;
+        }
+        
+        // Split by paragraphs first to avoid breaking mid-sentence
+        var paragraphs = text.Split(new[] { "\n\n", "\r\n\r\n" }, StringSplitOptions.None);
+        var currentChunk = new StringBuilder();
+        
+        foreach (var paragraph in paragraphs)
+        {
+            // If the paragraph itself is too long, split it
+            if (paragraph.Length > maxChunkSize)
+            {
+                // Save current chunk if it has content
+                if (currentChunk.Length > 0)
+                {
+                    chunks.Add(currentChunk.ToString().Trim());
+                    currentChunk.Clear();
+                }
+                
+                // Split long paragraph by sentences or words
+                var sentences = paragraph.Split(new[] { ". ", "? ", "! ", "។ ", "๏ ", "。" }, StringSplitOptions.None);
+                
+                foreach (var sentence in sentences)
+                {
+                    if (sentence.Length > maxChunkSize)
+                    {
+                        // Split by words if sentence is still too long
+                        var words = sentence.Split(' ');
+                        foreach (var word in words)
+                        {
+                            if (currentChunk.Length + word.Length + 1 > maxChunkSize)
+                            {
+                                if (currentChunk.Length > 0)
+                                {
+                                    chunks.Add(currentChunk.ToString().Trim());
+                                    currentChunk.Clear();
+                                }
+                            }
+                            
+                            if (currentChunk.Length > 0)
+                                currentChunk.Append(" ");
+                            currentChunk.Append(word);
+                        }
+                    }
+                    else
+                    {
+                        var sentenceWithPunctuation = sentence + (sentence.EndsWith(".") || sentence.EndsWith("?") || sentence.EndsWith("!") ? "" : ". ");
+                        
+                        if (currentChunk.Length + sentenceWithPunctuation.Length > maxChunkSize)
+                        {
+                            if (currentChunk.Length > 0)
+                            {
+                                chunks.Add(currentChunk.ToString().Trim());
+                                currentChunk.Clear();
+                            }
+                        }
+                        
+                        currentChunk.Append(sentenceWithPunctuation);
                     }
                 }
             }
-        });
-
-        return children.ToArray();
+            else
+            {
+                // Check if adding this paragraph would exceed the limit
+                var paragraphWithNewline = (currentChunk.Length > 0 ? "\n\n" : "") + paragraph;
+                
+                if (currentChunk.Length + paragraphWithNewline.Length > maxChunkSize)
+                {
+                    // Save current chunk and start new one
+                    if (currentChunk.Length > 0)
+                    {
+                        chunks.Add(currentChunk.ToString().Trim());
+                        currentChunk.Clear();
+                    }
+                    currentChunk.Append(paragraph);
+                }
+                else
+                {
+                    // Add to current chunk
+                    if (currentChunk.Length > 0)
+                        currentChunk.Append("\n\n");
+                    currentChunk.Append(paragraph);
+                }
+            }
+        }
+        
+        // Add remaining chunk if any
+        if (currentChunk.Length > 0)
+        {
+            chunks.Add(currentChunk.ToString().Trim());
+        }
+        
+        // If no chunks were created but we have text, just split it brutally
+        if (chunks.Count == 0 && !string.IsNullOrWhiteSpace(text))
+        {
+            for (int i = 0; i < text.Length; i += maxChunkSize)
+            {
+                var length = Math.Min(maxChunkSize, text.Length - i);
+                chunks.Add(text.Substring(i, length));
+            }
+        }
+        
+        Console.WriteLine($"Split text ({text.Length} chars) into {chunks.Count} chunks");
+        
+        return chunks;
     }
 
     public void Dispose()

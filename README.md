@@ -25,24 +25,43 @@ A powerful .NET 8 console application for audio recording, transcription, and in
   - Record both sources mixed together
   - Real-time volume level indicators
   - Support for multiple microphone devices
+  - Automatic audio format conversion (MP3 compression)
 
 - 🔤 **Automatic Transcription**
   - Powered by Azure OpenAI Whisper
   - Multi-language support (Auto-detect, English, Thai)
+  - **Smart file splitting for large recordings** (20-minute segments)
+  - **Automatic batch processing** for files over 25MB
   - High accuracy transcription
+
+- 🎯 **Advanced Audio Processing**
+  - **Process existing audio files** (WAV, MP3, M4A, MP4)
+  - **Mix separate microphone and system audio files**
+  - **Automatic MP3 conversion** for optimal file sizes
+  - **Intelligent segmentation** for long recordings
 
 - 📝 **AI-Powered Summarization** (Optional)
   - Generate concise summaries using Azure AI
   - Smart title generation for better organization
+  - Language-aware processing
 
 - 📚 **Notion Integration**
   - Automatically create pages in your Notion database
-  - Structured content with title, date, and full transcript
+  - **Handles large transcripts** (splits into 2000-char blocks)
+  - Structured content with title, date, summary, and full transcript
   - Seamless workflow integration
 
-- 💾 **Local Backup**
+- 🛡️ **Reliability & Protection**
+  - **Quota protection** - stops processing when rate limits are detected
+  - **Partial transcript recovery** - saves completed segments
+  - **Automatic retries** with smart delays
+  - Local backup for all transcripts
+
+- 💾 **File Management**
   - Save transcripts as timestamped text files
   - Includes both summary and full transcript
+  - Automatic cleanup of temporary files
+  - Preserves original recordings
 
 ## Prerequisites
 
@@ -158,28 +177,70 @@ echo 'export RECORDING_MICROPHONE="0"' >> ~/.bashrc
 
 ## Usage
 
-1. Run the application:
+### Quick Start
+
 ```bash
 dotnet run
 ```
 
-2. If environment variables are not set, you'll be prompted to select:
-   - Recording mode (microphone/system/both)
-   - Transcription language
-   - Microphone device (if applicable)
+You'll be presented with two main options:
+1. **Record new audio** - Start a new recording session
+2. **Process existing audio file(s)** - Process previously recorded files
 
-3. Press Enter to start recording
+### Recording New Audio
 
-4. Speak or play audio
+1. Select **operation mode**: Choose "1" for recording
+2. Select **recording mode**: Microphone, system audio, or both
+3. Select **language**: Auto-detect, English, or Thai
+4. Select **microphone**: Choose from available devices (if applicable)
+5. Press **Enter** to start recording
+6. Press **Enter** again to stop
 
-5. Press Enter again to stop recording
+The application automatically:
+- Converts large files to MP3 for compression
+- Splits files over 25MB into 20-minute segments
+- Transcribes each segment with Azure Whisper
+- Combines transcripts into one document
+- Generates AI summary (if configured)
+- Creates Notion page with full content
+- Saves local backup
 
-6. The application will:
-   - Transcribe the audio
-   - Generate a summary (if configured)
-   - Create a Notion page
-   - Save locally as a text file
-   - Clean up temporary files
+### Processing Existing Files
+
+#### Single File Processing
+```bash
+Select operation mode: 2
+Select file processing mode: 1
+Enter audio file path: C:\recordings\meeting.wav
+```
+
+#### Mixing Separate Audio Files
+```bash
+Select operation mode: 2
+Select file processing mode: 2
+Enter microphone WAV file path: C:\temp\recording.mic.wav
+Enter system audio WAV file path: C:\temp\recording.system.wav
+```
+
+The application will:
+- Mix the audio files (handling different sample rates/channels)
+- Process as a single combined file
+- Apply same splitting and transcription logic
+
+### Advanced Features
+
+#### Large File Handling
+Files over 25MB are automatically:
+- Split into 20-minute segments
+- Each segment converted to MP3 (~18MB from 220MB WAV)
+- Processed in batch with progress indicators
+- Combined into single transcript
+
+#### Quota Protection
+- Detects Azure rate limits (429 errors)
+- Stops processing to prevent charges
+- Saves partial transcripts
+- Shows clear error messages
 
 ### Example Output
 
@@ -244,12 +305,22 @@ unset RECORDING_MICROPHONE
 - **No audio devices found**: Ensure your microphone is connected and recognized by Windows
 - **System audio not recording**: Some systems require specific audio drivers or permissions
 - **Low volume**: Check your system audio settings and microphone levels
+- **Different audio formats**: The app automatically handles different sample rates and channel counts when mixing
 
 ### API Errors
 
 - **Azure Whisper**: Verify your endpoint URL includes the full path with API version
 - **Notion**: Ensure your integration has access to the database
-- **Rate limits**: Add delays between requests if hitting rate limits
+- **Rate limits**: The app automatically adds 5-second delays between segments
+- **File too large**: Files over 25MB are automatically split into segments
+- **Invalid file format**: Supported formats are WAV, MP3, M4A, MP4
+
+### Large File Issues
+
+- **"File exceeds 25MB limit"**: This is handled automatically with splitting
+- **"Quota exceeded"**: The app stops processing to prevent charges
+- **"Notion 2000 char limit"**: Long texts are automatically split into multiple blocks
+- **MP3 conversion fails**: The app falls back to WAV processing
 
 ## Project Structure
 

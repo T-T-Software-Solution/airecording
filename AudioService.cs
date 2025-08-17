@@ -68,11 +68,12 @@ public class AudioService : IDisposable
             var mp3Path = await ConvertToMp3(tempPath);
             if (!string.IsNullOrEmpty(mp3Path))
             {
-                // Clean up original WAV file
-                try { File.Delete(tempPath); } catch { }
+                Console.WriteLine($"WAV file preserved at: {tempPath}");
+                Console.WriteLine($"Using compressed MP3: {mp3Path}");
                 return mp3Path;
             }
             
+            Console.WriteLine($"MP3 conversion failed, using original WAV: {tempPath}");
             return tempPath;
         }
         catch (Exception ex)

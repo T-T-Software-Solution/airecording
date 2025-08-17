@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using AIConsoleAppRecording;
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
+using NAudio.MediaFoundation;
 using System.Text;
 using System.Runtime.InteropServices;
 
@@ -26,6 +28,19 @@ class Program
             Console.WriteLine("dotnet user-secrets set \"Azure:ApiKey\" \"<your-azure-api-key>\"");
             Console.WriteLine("dotnet user-secrets set \"Notion:ApiToken\" \"<your-notion-token>\"");
             Console.WriteLine("dotnet user-secrets set \"Notion:DatabaseId\" \"<your-notion-database-id>\"");
+            return;
+        }
+        
+        // Choose operation mode
+        Console.WriteLine("Select operation mode:");
+        Console.WriteLine("1. Record new audio");
+        Console.WriteLine("2. Process existing audio file(s)");
+        Console.Write("Enter choice (1-2): ");
+        
+        var modeChoice = Console.ReadLine()?.Trim();
+        if (modeChoice == "2")
+        {
+            await ProcessExistingFilesMode(configuration);
             return;
         }
         
@@ -121,10 +136,320 @@ class Program
             audioFilePath = await audioService.RecordAudioAsync(settings);
             Console.WriteLine("Recording complete.\n");
             
-            var azureService = new AzureWhisperService(configuration);
-            Console.WriteLine("Starting transcription...");
-            var transcription = await azureService.TranscribeAsync(audioFilePath, settings.Language);
-            Console.WriteLine("Transcription successful.\n");
+            // Use the same ProcessAudioFile method to handle file size checking and splitting
+            await ProcessAudioFile(audioFilePath, settings.Language, configuration);
+            
+            // Show environment variable tips based on actual selections and OS
+            ShowEnvironmentVariableSuggestions(settings);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"\nError: {ex.Message}");
+            if (ex.InnerException != null)
+            {
+                Console.WriteLine($"Details: {ex.InnerException.Message}");
+            }
+        }
+        finally
+        {
+            // Only delete if it's a temporary file (MP3), preserve WAV files
+            if (!string.IsNullOrEmpty(audioFilePath) && File.Exists(audioFilePath))
+            {
+                try
+                {
+                    var extension = Path.GetExtension(audioFilePath).ToLower();
+                    if (extension == ".mp3")
+                    {
+                        File.Delete(audioFilePath);
+                        Console.WriteLine("\nTemporary MP3 file cleaned up.");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"\nWAV file preserved at: {audioFilePath}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"\nWarning: Could not clean up temporary file: {ex.Message}");
+                }
+            }
+        }
+        
+        Console.WriteLine("\nPress any key to exit...");
+        Console.ReadKey();
+    }
+    
+    static async Task ProcessExistingFilesMode(IConfiguration configuration)
+    {
+        Console.WriteLine("\nSelect file processing mode:");
+        Console.WriteLine("1. Single audio file (WAV, MP3, M4A, MP4)");
+        Console.WriteLine("2. Two separate files (microphone + system audio WAV files)");
+        Console.Write("Enter choice (1-2): ");
+        
+        var fileChoice = Console.ReadLine()?.Trim();
+        
+        string? audioFilePath = null;
+        
+        try
+        {
+            if (fileChoice == "2")
+            {
+                // Process two separate files
+                Console.WriteLine("\nProcessing separate microphone and system audio files:");
+                
+                Console.Write("Enter microphone WAV file path: ");
+                var micPath = Console.ReadLine()?.Trim().Trim('"');
+                
+                Console.Write("Enter system audio WAV file path: ");
+                var systemPath = Console.ReadLine()?.Trim().Trim('"');
+                
+                if (string.IsNullOrEmpty(micPath) || string.IsNullOrEmpty(systemPath))
+                {
+                    Console.WriteLine("Error: Both file paths are required.");
+                    return;
+                }
+                
+                if (!File.Exists(micPath))
+                {
+                    Console.WriteLine($"Error: Microphone file not found: {micPath}");
+                    return;
+                }
+                
+                if (!File.Exists(systemPath))
+                {
+                    Console.WriteLine($"Error: System audio file not found: {systemPath}");
+                    return;
+                }
+                
+                // Mix the two files
+                audioFilePath = await MixSeparateAudioFiles(micPath, systemPath);
+                if (string.IsNullOrEmpty(audioFilePath))
+                {
+                    Console.WriteLine("Error: Failed to mix audio files.");
+                    return;
+                }
+            }
+            else
+            {
+                // Process single file
+                Console.Write("\nEnter audio file path: ");
+                var filePath = Console.ReadLine()?.Trim().Trim('"');
+                
+                if (string.IsNullOrEmpty(filePath))
+                {
+                    Console.WriteLine("Error: File path is required.");
+                    return;
+                }
+                
+                if (!File.Exists(filePath))
+                {
+                    Console.WriteLine($"Error: File not found: {filePath}");
+                    return;
+                }
+                
+                var extension = Path.GetExtension(filePath).ToLower();
+                if (extension != ".wav" && extension != ".mp3" && extension != ".m4a" && extension != ".mp4")
+                {
+                    Console.WriteLine($"Error: Unsupported file format: {extension}");
+                    Console.WriteLine("Supported formats: .wav, .mp3, .m4a, .mp4");
+                    return;
+                }
+                
+                audioFilePath = filePath;
+            }
+            
+            // Select language
+            Console.WriteLine("\nSelect transcription language:");
+            Console.WriteLine("1. Auto-detect");
+            Console.WriteLine("2. English (en)");
+            Console.WriteLine("3. Thai (th)");
+            Console.Write("Enter choice (1-3): ");
+            
+            var langChoice = Console.ReadLine()?.Trim();
+            var language = langChoice switch
+            {
+                "1" => "auto",
+                "2" => "en",
+                "3" => "th",
+                _ => "auto"
+            };
+            
+            Console.WriteLine($"\nProcessing audio file: {audioFilePath}");
+            Console.WriteLine($"Language: {language}");
+            
+            // Process the file
+            await ProcessAudioFile(audioFilePath, language, configuration);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"\nError: {ex.Message}");
+            if (ex.InnerException != null)
+            {
+                Console.WriteLine($"Details: {ex.InnerException.Message}");
+            }
+        }
+        finally
+        {
+            // Clean up temporary mixed file if created
+            if (!string.IsNullOrEmpty(audioFilePath) && fileChoice == "2" && File.Exists(audioFilePath))
+            {
+                try
+                {
+                    File.Delete(audioFilePath);
+                    Console.WriteLine("\nTemporary mixed file cleaned up.");
+                }
+                catch { }
+            }
+        }
+        
+        Console.WriteLine("\nPress any key to exit...");
+        Console.ReadKey();
+    }
+    
+    static async Task<string> MixSeparateAudioFiles(string micPath, string systemPath)
+    {
+        try
+        {
+            Console.WriteLine("Mixing separate audio files...");
+            
+            var outputPath = Path.Combine(Path.GetTempPath(), $"mixed_{Guid.NewGuid()}.wav");
+            
+            using var micReader = new AudioFileReader(micPath);
+            using var systemReader = new AudioFileReader(systemPath);
+            
+            Console.WriteLine($"Microphone: {micReader.WaveFormat.SampleRate}Hz, {micReader.WaveFormat.Channels} channels");
+            Console.WriteLine($"System: {systemReader.WaveFormat.SampleRate}Hz, {systemReader.WaveFormat.Channels} channels");
+            
+            // Determine target format (use higher sample rate, stereo)
+            int targetSampleRate = Math.Max(micReader.WaveFormat.SampleRate, systemReader.WaveFormat.SampleRate);
+            int targetChannels = 2; // Always use stereo for mixed output
+            
+            Console.WriteLine($"Target format: {targetSampleRate}Hz, {targetChannels} channels");
+            
+            // Process microphone audio
+            ISampleProvider micProvider = micReader;
+            
+            // Convert mic to stereo if mono
+            if (micReader.WaveFormat.Channels == 1)
+            {
+                Console.WriteLine("Converting microphone from mono to stereo...");
+                micProvider = new MonoToStereoSampleProvider(micProvider);
+            }
+            
+            // Resample mic if needed
+            if (micReader.WaveFormat.SampleRate != targetSampleRate)
+            {
+                Console.WriteLine($"Resampling microphone from {micReader.WaveFormat.SampleRate}Hz to {targetSampleRate}Hz...");
+                micProvider = new WdlResamplingSampleProvider(micProvider, targetSampleRate);
+            }
+            
+            // Process system audio
+            ISampleProvider systemProvider = systemReader;
+            
+            // Convert system to stereo if mono
+            if (systemReader.WaveFormat.Channels == 1)
+            {
+                Console.WriteLine("Converting system audio from mono to stereo...");
+                systemProvider = new MonoToStereoSampleProvider(systemProvider);
+            }
+            
+            // Resample system if needed
+            if (systemReader.WaveFormat.SampleRate != targetSampleRate)
+            {
+                Console.WriteLine($"Resampling system audio from {systemReader.WaveFormat.SampleRate}Hz to {targetSampleRate}Hz...");
+                systemProvider = new WdlResamplingSampleProvider(systemProvider, targetSampleRate);
+            }
+            
+            // Verify formats match
+            Console.WriteLine($"Final mic format: {micProvider.WaveFormat.SampleRate}Hz, {micProvider.WaveFormat.Channels} channels");
+            Console.WriteLine($"Final system format: {systemProvider.WaveFormat.SampleRate}Hz, {systemProvider.WaveFormat.Channels} channels");
+            
+            // Mix the two sources
+            var mixer = new MixingSampleProvider(new[] { micProvider, systemProvider });
+            
+            Console.WriteLine("Writing mixed audio file...");
+            
+            // Write mixed output
+            WaveFileWriter.CreateWaveFile16(outputPath, mixer);
+            
+            var originalMicSize = new FileInfo(micPath).Length;
+            var originalSystemSize = new FileInfo(systemPath).Length;
+            var mixedSize = new FileInfo(outputPath).Length;
+            
+            Console.WriteLine($"✅ Mixed file created: {mixedSize / (1024.0 * 1024.0):F2} MB");
+            Console.WriteLine($"  Original mic: {originalMicSize / (1024.0 * 1024.0):F2} MB");
+            Console.WriteLine($"  Original system: {originalSystemSize / (1024.0 * 1024.0):F2} MB");
+            
+            return outputPath;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to mix audio files: {ex.Message}");
+            Console.WriteLine($"Error details: {ex}");
+            return string.Empty;
+        }
+    }
+    
+    static async Task ProcessAudioFile(string audioFilePath, string language, IConfiguration configuration)
+    {
+        string finalAudioPath = audioFilePath;
+        bool createdTempMp3 = false;
+        List<string> tempFiles = new List<string>();
+        
+        // Convert WAV files to MP3 for compression
+        if (Path.GetExtension(audioFilePath).ToLower() == ".wav")
+        {
+            var fileInfo = new FileInfo(audioFilePath);
+            var fileSizeMB = fileInfo.Length / (1024.0 * 1024.0);
+            
+            Console.WriteLine($"Original WAV file size: {fileSizeMB:F2} MB");
+            
+            // Always convert WAV to MP3 for better upload performance
+            var mp3Path = await ConvertWavToMp3(audioFilePath);
+            if (!string.IsNullOrEmpty(mp3Path))
+            {
+                finalAudioPath = mp3Path;
+                createdTempMp3 = true;
+                tempFiles.Add(mp3Path);
+            }
+            else
+            {
+                Console.WriteLine("MP3 conversion failed, using original WAV file.");
+            }
+        }
+        
+        try
+        {
+            // Check if file needs to be split
+            var finalFileInfo = new FileInfo(finalAudioPath);
+            var finalFileSizeMB = finalFileInfo.Length / (1024.0 * 1024.0);
+            
+            string transcription;
+            
+            if (finalFileSizeMB > 25)
+            {
+                Console.WriteLine($"File size ({finalFileSizeMB:F2} MB) exceeds Azure limit. Splitting into 20-minute segments...");
+                
+                // Split the audio file into segments
+                var segments = await SplitAudioFile(finalAudioPath, 20); // 20 minutes each
+                tempFiles.AddRange(segments);
+                
+                if (segments.Count == 0)
+                {
+                    throw new InvalidOperationException("Failed to split audio file into segments.");
+                }
+                
+                // Transcribe each segment
+                transcription = await TranscribeMultipleSegments(segments, language, configuration);
+            }
+            else
+            {
+                // Process single file
+                var azureService = new AzureWhisperService(configuration);
+                Console.WriteLine("Starting transcription...");
+                transcription = await azureService.TranscribeAsync(finalAudioPath, language);
+                Console.WriteLine("Transcription successful.\n");
+            }
             
             if (string.IsNullOrWhiteSpace(transcription))
             {
@@ -148,7 +473,7 @@ class Program
                 try
                 {
                     var summaryService = new AzureSummaryService(configuration);
-                    (aiTitle, summary) = await summaryService.SummarizeAsync(transcription, settings.Language);
+                    (aiTitle, summary) = await summaryService.SummarizeAsync(transcription, language);
                     
                     if (!string.IsNullOrWhiteSpace(aiTitle))
                     {
@@ -172,12 +497,6 @@ class Program
                     Console.WriteLine("Continuing without summary...\n");
                 }
             }
-            else
-            {
-                Console.WriteLine("💡 TIP: Configure Azure AI to enable automatic summarization");
-                Console.WriteLine("   dotnet user-secrets set \"AzureAI:EndpointUrl\" \"<your-azure-ai-endpoint>\"");
-                Console.WriteLine("   dotnet user-secrets set \"AzureAI:ApiKey\" \"<your-azure-ai-key>\"\n");
-            }
             
             bool notionSuccess = false;
             try
@@ -200,6 +519,7 @@ class Program
                 
                 var fileContent = new StringBuilder();
                 fileContent.AppendLine($"=== Audio Transcription - {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+                fileContent.AppendLine($"Source file: {audioFilePath}");
                 fileContent.AppendLine();
                 
                 if (!string.IsNullOrWhiteSpace(summary))
@@ -228,41 +548,334 @@ class Program
             if (notionSuccess || localSaveSuccess)
             {
                 Console.WriteLine("\nOperation completed successfully!");
-                
-                // Show environment variable tips based on actual selections and OS
-                ShowEnvironmentVariableSuggestions(settings);
             }
             else
             {
                 Console.WriteLine("\nOperation failed - transcript could not be saved.");
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"\nError: {ex.Message}");
-            if (ex.InnerException != null)
-            {
-                Console.WriteLine($"Details: {ex.InnerException.Message}");
-            }
-        }
         finally
         {
-            if (!string.IsNullOrEmpty(audioFilePath) && File.Exists(audioFilePath))
+            // Clean up all temporary files
+            foreach (var tempFile in tempFiles)
             {
-                try
+                if (File.Exists(tempFile))
                 {
-                    File.Delete(audioFilePath);
-                    Console.WriteLine("\nTemporary audio file cleaned up.");
+                    try
+                    {
+                        File.Delete(tempFile);
+                    }
+                    catch { }
                 }
-                catch (Exception ex)
+            }
+            
+            if (tempFiles.Count > 0)
+            {
+                Console.WriteLine("Temporary files cleaned up.");
+            }
+        }
+    }
+    
+    static async Task<List<string>> SplitAudioFile(string audioFilePath, int segmentMinutes)
+    {
+        var segments = new List<string>();
+        
+        try
+        {
+            Console.WriteLine($"Splitting audio into {segmentMinutes}-minute segments...");
+            
+            using var reader = new AudioFileReader(audioFilePath);
+            var segmentDuration = TimeSpan.FromMinutes(segmentMinutes);
+            var totalDuration = reader.TotalTime;
+            
+            Console.WriteLine($"Total duration: {totalDuration:hh\\:mm\\:ss} ({totalDuration.TotalMinutes:F1} minutes)");
+            Console.WriteLine($"Segment duration: {segmentDuration:hh\\:mm\\:ss} ({segmentMinutes} minutes)");
+            
+            int segmentCount = (int)Math.Ceiling(totalDuration.TotalMinutes / segmentMinutes);
+            Console.WriteLine($"Will create {segmentCount} segments");
+            
+            for (int i = 0; i < segmentCount; i++)
+            {
+                var startTime = TimeSpan.FromMinutes(i * segmentMinutes);
+                var endTime = TimeSpan.FromMinutes(Math.Min((i + 1) * segmentMinutes, totalDuration.TotalMinutes));
+                
+                // Ensure endTime doesn't exceed total duration
+                if (endTime > totalDuration)
                 {
-                    Console.WriteLine($"\nWarning: Could not delete temporary file: {ex.Message}");
+                    endTime = totalDuration;
                 }
+                
+                var segmentPath = Path.Combine(Path.GetTempPath(), 
+                    $"segment_{i + 1:D2}_{Path.GetFileNameWithoutExtension(audioFilePath)}.wav");
+                
+                Console.WriteLine($"Creating segment {i + 1}/{segmentCount}: {startTime:hh\\:mm\\:ss} - {endTime:hh\\:mm\\:ss}");
+                
+                // Create segment
+                await CreateAudioSegment(audioFilePath, segmentPath, startTime, endTime);
+                
+                // Check if segment was created successfully
+                if (File.Exists(segmentPath))
+                {
+                    var segmentInfo = new FileInfo(segmentPath);
+                    Console.WriteLine($"  WAV segment created: {segmentInfo.Length / (1024.0 * 1024.0):F2} MB");
+                    
+                    // Convert each segment to MP3 for compression
+                    Console.WriteLine($"  Converting segment {i + 1} to MP3...");
+                    var mp3SegmentPath = await ConvertSegmentToMp3(segmentPath);
+                    
+                    if (!string.IsNullOrEmpty(mp3SegmentPath) && File.Exists(mp3SegmentPath))
+                    {
+                        var mp3Info = new FileInfo(mp3SegmentPath);
+                        Console.WriteLine($"  ✅ MP3 segment created: {mp3Info.Length / (1024.0 * 1024.0):F2} MB");
+                        
+                        // Check if MP3 is still too large
+                        if (mp3Info.Length / (1024.0 * 1024.0) > 25)
+                        {
+                            Console.WriteLine($"  ⚠️  WARNING: MP3 segment still exceeds 25MB limit");
+                        }
+                        
+                        // Delete WAV segment to save space
+                        try { File.Delete(segmentPath); } catch { }
+                        
+                        segments.Add(mp3SegmentPath);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  ⚠️  MP3 conversion failed, using WAV segment");
+                        segments.Add(segmentPath);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"  ❌ Failed to create segment {i + 1}");
+                }
+            }
+            
+            Console.WriteLine($"Successfully created {segments.Count} segments\n");
+            return segments;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to split audio file: {ex.Message}");
+            
+            // Clean up any partial segments
+            foreach (var segment in segments)
+            {
+                try { File.Delete(segment); } catch { }
+            }
+            
+            return new List<string>();
+        }
+    }
+    
+    static async Task CreateAudioSegment(string inputPath, string outputPath, TimeSpan startTime, TimeSpan endTime)
+    {
+        try
+        {
+            using var reader = new AudioFileReader(inputPath);
+            
+            // Validate time ranges
+            if (startTime >= reader.TotalTime)
+            {
+                Console.WriteLine($"    Warning: Start time {startTime} exceeds audio duration {reader.TotalTime}");
+                return;
+            }
+            
+            if (endTime > reader.TotalTime)
+            {
+                endTime = reader.TotalTime;
+            }
+            
+            var duration = endTime - startTime;
+            if (duration <= TimeSpan.Zero)
+            {
+                Console.WriteLine($"    Warning: Invalid duration {duration}");
+                return;
+            }
+            
+            Console.WriteLine($"    Extracting {duration:hh\\:mm\\:ss} from {startTime:hh\\:mm\\:ss} to {endTime:hh\\:mm\\:ss}");
+            
+            // Create segment using OffsetSampleProvider
+            var segmentProvider = new OffsetSampleProvider(reader)
+            {
+                SkipOver = startTime,
+                Take = duration
+            };
+            
+            // Write the segment
+            await Task.Run(() =>
+            {
+                WaveFileWriter.CreateWaveFile16(outputPath, segmentProvider);
+            });
+            
+            // Verify the file was created
+            if (File.Exists(outputPath))
+            {
+                var fileInfo = new FileInfo(outputPath);
+                if (fileInfo.Length > 0)
+                {
+                    Console.WriteLine($"    ✅ Segment file created successfully");
+                }
+                else
+                {
+                    Console.WriteLine($"    ❌ Segment file is empty");
+                    try { File.Delete(outputPath); } catch { }
+                }
+            }
+            else
+            {
+                Console.WriteLine($"    ❌ Segment file was not created");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    ❌ Error creating segment: {ex.Message}");
+        }
+    }
+    
+    static async Task<string> TranscribeMultipleSegments(List<string> segments, string language, IConfiguration configuration)
+    {
+        var allTranscripts = new List<string>();
+        var azureService = new AzureWhisperService(configuration);
+        
+        Console.WriteLine($"Transcribing {segments.Count} segments...\n");
+        
+        for (int i = 0; i < segments.Count; i++)
+        {
+            var segment = segments[i];
+            var segmentNumber = i + 1;
+            
+            try
+            {
+                Console.WriteLine($"Processing segment {segmentNumber}/{segments.Count}...");
+                
+                var segmentTranscript = await azureService.TranscribeAsync(segment, language);
+                
+                if (!string.IsNullOrWhiteSpace(segmentTranscript))
+                {
+                    // Add segment marker and transcript
+                    allTranscripts.Add($"[Segment {segmentNumber}]");
+                    allTranscripts.Add(segmentTranscript.Trim());
+                    allTranscripts.Add(""); // Empty line between segments
+                    
+                    Console.WriteLine($"Segment {segmentNumber} completed ({segmentTranscript.Length} characters)");
+                }
+                else
+                {
+                    Console.WriteLine($"⚠️  Segment {segmentNumber} produced empty transcript");
+                    allTranscripts.Add($"[Segment {segmentNumber}] - No speech detected");
+                    allTranscripts.Add("");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Failed to transcribe segment {segmentNumber}: {ex.Message}");
+                
+                // Check for quota/rate limit errors
+                if (ex.Message.Contains("429") || ex.Message.Contains("TooManyRequests") || 
+                    ex.Message.Contains("rate limit") || ex.Message.Contains("quota"))
+                {
+                    Console.WriteLine($"🛑 QUOTA/RATE LIMIT EXCEEDED - Stopping processing to avoid further charges");
+                    Console.WriteLine($"Successfully processed {segmentNumber - 1} out of {segments.Count} segments");
+                    
+                    allTranscripts.Add($"[Segment {segmentNumber}] - STOPPED: Rate limit exceeded");
+                    allTranscripts.Add($"[Note: Processing stopped at segment {segmentNumber} due to quota limits]");
+                    allTranscripts.Add("");
+                    
+                    // Return partial transcript
+                    break;
+                }
+                
+                allTranscripts.Add($"[Segment {segmentNumber}] - Transcription failed: {ex.Message}");
+                allTranscripts.Add("");
+            }
+            
+            // Longer delay between requests to respect rate limits
+            if (i < segments.Count - 1)
+            {
+                Console.WriteLine($"Waiting 5 seconds before next segment to respect rate limits...");
+                await Task.Delay(5000); // 5 second delay
             }
         }
         
-        Console.WriteLine("\nPress any key to exit...");
-        Console.ReadKey();
+        var combinedTranscript = string.Join("\n", allTranscripts).Trim();
+        
+        Console.WriteLine($"\n✅ All segments processed. Combined transcript: {combinedTranscript.Length} characters\n");
+        Console.WriteLine("Combined transcript preview:");
+        Console.WriteLine("─" + new string('─', 50));
+        Console.WriteLine(combinedTranscript.Length > 500 
+            ? combinedTranscript.Substring(0, 500) + "..." 
+            : combinedTranscript);
+        Console.WriteLine("─" + new string('─', 50) + "\n");
+        
+        return combinedTranscript;
+    }
+    
+    static async Task<string> ConvertSegmentToMp3(string wavPath)
+    {
+        try
+        {
+            var mp3Path = Path.ChangeExtension(wavPath, ".mp3");
+            
+            using var reader = new AudioFileReader(wavPath);
+            
+            // Use 128 kbps for good quality/size balance
+            await Task.Run(() =>
+            {
+                MediaFoundationEncoder.EncodeToMp3(reader, mp3Path, 128000);
+            });
+            
+            var originalSize = new FileInfo(wavPath).Length;
+            var compressedSize = new FileInfo(mp3Path).Length;
+            var compressionRatio = (1 - (double)compressedSize / originalSize) * 100;
+            
+            Console.WriteLine($"    Compression: {originalSize / (1024.0 * 1024.0):F2} MB → {compressedSize / (1024.0 * 1024.0):F2} MB ({compressionRatio:F1}% reduction)");
+            
+            return mp3Path;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    Failed to convert segment to MP3: {ex.Message}");
+            return string.Empty;
+        }
+    }
+    
+    static async Task<string> ConvertWavToMp3(string wavPath)
+    {
+        try
+        {
+            var mp3Path = Path.ChangeExtension(wavPath, ".mp3");
+            Console.WriteLine("Converting WAV to MP3 for compression...");
+            
+            using var reader = new AudioFileReader(wavPath);
+            
+            // Use 128 kbps for good quality/size balance
+            await Task.Run(() =>
+            {
+                MediaFoundationEncoder.EncodeToMp3(reader, mp3Path, 128000);
+            });
+            
+            var originalSize = new FileInfo(wavPath).Length;
+            var compressedSize = new FileInfo(mp3Path).Length;
+            var compressionRatio = (1 - (double)compressedSize / originalSize) * 100;
+            
+            Console.WriteLine($"MP3 conversion complete!");
+            Console.WriteLine($"Original: {originalSize / (1024.0 * 1024.0):F2} MB → Compressed: {compressedSize / (1024.0 * 1024.0):F2} MB ({compressionRatio:F1}% reduction)");
+            
+            // Check if still too large for Azure API
+            if (compressedSize > 25 * 1024 * 1024) // 25MB limit
+            {
+                Console.WriteLine($"⚠️  WARNING: File is still {compressedSize / (1024.0 * 1024.0):F1} MB, exceeding Azure's 25MB limit!");
+                Console.WriteLine("Consider using a shorter audio segment.");
+            }
+            
+            return mp3Path;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to convert WAV to MP3: {ex.Message}");
+            return string.Empty;
+        }
     }
     
     static void ValidateConfiguration(IConfiguration configuration)
