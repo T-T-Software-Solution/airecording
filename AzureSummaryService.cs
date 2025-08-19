@@ -52,9 +52,7 @@ public class AzureSummaryService
             var requestBody = new
             {
                 messages = messages,
-                max_tokens = 1500, // Increased for detailed content
-                temperature = 0.3,
-                top_p = 1.0
+                max_completion_tokens = 1500 // Increased for detailed content
             };
 
             var json = JsonSerializer.Serialize(requestBody);
